@@ -1,238 +1,380 @@
 import streamlit as st
-import random
+import streamlit.components.v1 as components
 
-# 페이지 설정
+# 페이지 기본 설정
 st.set_page_config(
-    page_title="축구 심판 시뮬레이터",
+    page_title="1인칭 3D 축구 심판 시뮬레이터",
     page_icon="⚽",
-    layout="centered"
+    layout="wide",
+    initial_sidebar_state="collapsed"
 )
 
-# 세션 상태 초기화
-if "state" not in st.session_state:
-    st.session_state.state = "MENU"
-    st.session_state.ref_name = "김심판"
-    st.session_state.league = "지역 아마추어 리그 (Division 5)"
-    st.session_state.reputation = 50
-    st.session_state.money = 100000
-    
-    # 능력치
-    st.session_state.stamina = 50
-    st.session_state.authority = 50
-    st.session_state.vision = 50
-    
-    # 경기 진행 변수
-    st.session_state.composure = 100
-    st.session_state.correct_count = 0
-    st.session_state.total_incidents = 3
-    st.session_state.current_incident_idx = 0
-    st.session_state.events_list = []
-    st.session_state.match_report = {}
-    st.session_state.last_message = ""
+# 여백 제거 및 전체 화면 스타일 설정
+st.markdown("""
+    <style>
+        .block-container {
+            padding-top: 0rem;
+            padding-bottom: 0rem;
+            padding-left: 0rem;
+            padding-right: 0rem;
+        }
+        header {visibility: hidden;}
+        footer {visibility: hidden;}
+    </style>
+""", unsafe_allow_html=True)
 
-def reset_match():
-    st.session_state.composure = 100
-    st.session_state.correct_count = 0
-    st.session_state.current_incident_idx = 0
-    event_pool = [
-        {"type": "FOUL", "desc": "미드필드 지역에서 거친 태클 발생!", "correct": ["1", "2", "3"]},
-        {"type": "OFFSIDE", "desc": "공격 팀의 침투 패스, 오프사이드 의심!", "correct": ["1"]},
-        {"type": "PENALTY", "desc": "페널티 박스 안에서 수비수와 공격수 간의 충돌!", "correct": ["3", "4"]},
-        {"type": "DIVE", "desc": "페널티 박스 안에서 발이 걸리지 않았는데 넘어졌습니다 (할리우드 의심)", "correct": ["2"]}
-    ]
-    st.session_state.events_list = random.sample(event_pool, st.session_state.total_incidents)
-    st.session_state.state = "MATCH"
-    st.session_state.last_message = "경기가 시작되었습니다. 필드의 상황을 주시하세요!"
+# 3D HTML / JavaScript 앱 코드
+html_code = """
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { margin: 0; overflow: hidden; background: #050b14; font-family: 'Pretendard', system-ui, sans-serif; user-select: none; }
+        #crosshair { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 10px; height: 10px; border: 2px solid rgba(255,255,255,0.8); border-radius: 50%; pointer-events: none; z-index: 20; }
+        .hud-panel { background: rgba(10, 16, 30, 0.75); backdrop-filter: blur(8px); border: 1px solid rgba(255,255,255,0.15); }
+    </style>
+</head>
+<body class="text-white">
 
-def process_judgment(choice):
-    current_event = st.session_state.events_list[st.session_state.current_incident_idx]
-    is_correct = choice in current_event["correct"]
-    
-    # 시야 스탯 보정
-    if not is_correct and random.random() < (st.session_state.vision * 0.002):
-        is_correct = True
+    <!-- 크로스헤어 -->
+    <div id="crosshair"></div>
 
-    if is_correct:
-        st.session_state.correct_count += 1
-        st.session_state.composure = min(100, st.session_state.composure + 5)
-        st.session_state.last_message = "✨ 정확한 판정입니다! 관중과 선수들이 수긍합니다."
-        next_step()
-    else:
-        st.session_state.composure -= 30
-        st.session_state.reputation -= 5
-        st.session_state.last_message = "❌ 판정 논란 발생! 선수들이 거세게 항의합니다!"
-        
-        # 치명적 오심 시 VAR 발동 기회
-        if current_event["type"] in ["PENALTY", "OFFSIDE"] and random.random() > 0.3:
-            st.session_state.state = "VAR"
-        else:
-            next_step()
+    <!-- 상단 HUD -->
+    <div class="absolute top-4 left-1/2 transform -translate-x-1/2 flex gap-6 px-6 py-3 rounded-full hud-panel text-sm font-bold z-10 shadow-2xl">
+        <div>🏟️ <span id="hud-league">지역 2부 리그</span></div>
+        <div>⭐ 평판: <span id="hud-rep" class="text-yellow-400">50</span></div>
+        <div>🧠 멘탈: <span id="hud-composure" class="text-emerald-400">100%</span></div>
+        <div>⚖️ 정확도: <span id="hud-acc" class="text-blue-400">100%</span></div>
+    </div>
 
-def resolve_var(overturn):
-    if overturn:
-        st.session_state.correct_count += 1
-        st.session_state.composure += 10
-        st.session_state.last_message = "🔄 VAR 판독 결과: 판정이 올바르게 번복되었습니다."
-    else:
-        st.session_state.last_message = "🔒 VAR 판독 결과: 원심이 유지되었습니다. 관중석에서 야유가 터져 나옵니다!"
-    next_step()
+    <!-- 이동 가이드 -->
+    <div id="controls-hint" class="absolute bottom-4 left-4 hud-panel px-4 py-3 rounded-xl text-xs z-10 text-gray-300 pointer-events-none">
+        <p class="font-bold text-yellow-400 mb-1">🎮 조작 방법</p>
+        🖱️ <b>화면 클릭</b>: 마우스 시점 고정 (ESC: 해제)<br>
+        ⌨️ <b>W, A, S, D</b>: 그라운드 이동 (심판 위치 조율)
+    </div>
 
-def next_step():
-    st.session_state.current_incident_idx += 1
-    if st.session_state.current_incident_idx >= st.session_state.total_incidents or st.session_state.composure <= 0:
-        finish_match()
-    else:
-        st.session_state.state = "MATCH"
+    <!-- 돌발 판정 모달 -->
+    <div id="incident-modal" class="hidden absolute inset-0 bg-black/80 backdrop-blur-md flex items-center justify-center z-30">
+        <div class="hud-panel p-8 rounded-2xl max-w-lg w-full text-center shadow-2xl border border-yellow-500/50">
+            <span class="inline-block px-3 py-1 bg-yellow-500/20 text-yellow-400 text-xs font-bold rounded-full mb-3">ON-FIELD DECISION</span>
+            <h2 class="text-2xl font-black text-yellow-400 mb-2">🚨 돌발 판정 상황 발생!</h2>
+            <p id="incident-desc" class="text-base text-gray-200 mb-6 font-medium">미드필드 지역에서 거친 태클이 발생했습니다!</p>
+            
+            <div class="grid grid-cols-2 gap-3">
+                <button onclick="makeDecision(1)" class="bg-emerald-600 hover:bg-emerald-500 py-3 px-4 rounded-xl font-bold transition">1. 경기 진행 (Play On)</button>
+                <button onclick="makeDecision(2)" class="bg-blue-600 hover:bg-blue-500 py-3 px-4 rounded-xl font-bold transition">2. 구두 경고 (Warning)</button>
+                <button onclick="makeDecision(3)" class="bg-yellow-600 hover:bg-yellow-500 py-3 px-4 rounded-xl font-bold transition">3. 경고 (Yellow Card)</button>
+                <button onclick="makeDecision(4)" class="bg-red-600 hover:bg-red-500 py-3 px-4 rounded-xl font-bold transition">4. 퇴장 (Red Card)</button>
+            </div>
+        </div>
+    </div>
 
-def finish_match():
-    accuracy = (st.session_state.correct_count / st.session_state.total_incidents) * 100
-    earned = 50000 + (st.session_state.correct_count * 15000)
-    st.session_state.money += earned
-    
-    eval_text = ""
-    if accuracy >= 70:
-        st.session_state.reputation += 10
-        eval_text = "냉정하고 침착한 판정으로 호평을 받았습니다."
-    else:
-        st.session_state.reputation -= 15
-        eval_text = "오심 논란으로 협회와 언론의 뭇매를 맞았습니다."
+    <!-- VAR 모달 -->
+    <div id="var-modal" class="hidden absolute inset-0 bg-black/90 backdrop-blur-md flex items-center justify-center z-30">
+        <div class="hud-panel p-8 rounded-2xl max-w-md w-full text-center shadow-2xl border border-blue-500/50">
+            <span class="inline-block px-3 py-1 bg-blue-500/20 text-blue-400 text-xs font-bold rounded-full mb-3">VAR REVIEW</span>
+            <h2 class="text-2xl font-black text-blue-400 mb-2">📺 온필드 리뷰 권고</h2>
+            <p class="text-sm text-gray-300 mb-6">VAR 룸에서 리플레이 확인을 요청했습니다. 판정을 변경하시겠습니까?</p>
+            
+            <div class="flex gap-4">
+                <button onclick="resolveVar(true)" class="flex-1 bg-blue-600 hover:bg-blue-500 py-3 rounded-xl font-bold transition">판정 번복</button>
+                <button onclick="resolveVar(false)" class="flex-1 bg-red-600 hover:bg-red-500 py-3 rounded-xl font-bold transition">원심 유지</button>
+            </div>
+        </div>
+    </div>
 
-    # 승급 체크
-    if st.session_state.reputation >= 80 and "Division 5" in st.session_state.league:
-        st.session_state.league = "프로 2부 리그 (Division 2)"
-        eval_text += "\n\n🎉 축하합니다! 상위 리그로 승격되었습니다!"
-    elif st.session_state.reputation >= 130 and "Division 2" in st.session_state.league:
-        st.session_state.league = "프리미어리그 (Premier League)"
-        eval_text += "\n\n🏆 최고 무대인 프리미어리그로 승격되었습니다!"
+    <!-- 리포트 모달 -->
+    <div id="report-modal" class="hidden absolute inset-0 bg-black/90 backdrop-blur-md flex items-center justify-center z-30">
+        <div class="hud-panel p-8 rounded-2xl max-w-md w-full text-center shadow-2xl">
+            <h2 class="text-2xl font-black mb-4">📊 경기 종료 리포트</h2>
+            <div id="report-content" class="text-gray-300 mb-6 space-y-2 text-left"></div>
+            <button onclick="startNewMatch()" class="w-full bg-emerald-600 hover:bg-emerald-500 py-3 rounded-xl font-bold transition">다음 경기 배정받기</button>
+        </div>
+    </div>
 
-    st.session_state.match_report = {
-        "accuracy": accuracy,
-        "correct": st.session_state.correct_count,
-        "total": st.session_state.total_incidents,
-        "earned": earned,
-        "eval": eval_text
-    }
-    st.session_state.state = "POST_MATCH"
+    <script>
+        let scene, camera, renderer;
+        let moveForward = false, moveBackward = false, moveLeft = false, moveRight = false;
+        let prevTime = performance.now();
+        let velocity = new THREE.Vector3();
+        let direction = new THREE.Vector3();
 
-# --- 화면 UI 렌더링 ---
-st.title("⚽ 축구 심판 시뮬레이터")
+        let players = [], ball;
 
-# 상단 HUD (상태바)
-st.markdown("---")
-col1, col2, col3, col4 = st.columns(4)
-col1.metric("소속 리그", st.session_state.league.split()[0])
-col2.metric("평판", f"{st.session_state.reputation}점")
-col3.metric("자금", f"{st.session_state.money:,}원")
-col4.metric("심판 멘탈", f"{st.session_state.composure}%")
-st.markdown("---")
+        let gameState = {
+            league: "지역 아마추어 리그 (Div 5)",
+            reputation: 50,
+            composure: 100,
+            correctCount: 0,
+            totalIncidents: 3,
+            currentIncident: 0,
+            activeEvent: null
+        };
 
-# 1. 메인 메뉴
-if st.session_state.state == "MENU":
-    st.subheader(f"안녕하세요, {st.session_state.ref_name} 주심!")
-    st.markdown("아마추어 리그에서 출발하여 최고의 무대인 월드컵/프리미어리그 결승전 주심에 도전하세요.")
-    
-    if st.button("🏟️ 경기 배정받고 심판 보기", use_container_width=True):
-        reset_match()
-        st.rerun()
-        
-    if st.button("📈 트레이닝 및 장비 상점", use_container_width=True):
-        st.session_state.state = "UPGRADE"
-        st.rerun()
+        const eventPool = [
+            { type: "FOUL", desc: "미드필드 지역에서 깊은 태클! 공격수가 넘어집니다.", correct: [1, 2, 3] },
+            { type: "OFFSIDE", desc: "최전방 침투 패스! 오프사이드 위치가 의심됩니다.", correct: [1] },
+            { type: "PENALTY", desc: "페널티 박스 안에서 수비수와 강한 충돌!", correct: [3, 4] },
+            { type: "DIVE", desc: "박스 안에서 시뮬레이션 파울(할리우드 액션) 의심 상황!", correct: [2] }
+        ];
 
-# 2. 경기 진행 중 (돌발 상황 판정)
-elif st.session_state.state == "MATCH":
-    current_event = st.session_state.events_list[st.session_state.current_incident_idx]
-    
-    st.info(f"📍 **[상황 {st.session_state.current_incident_idx + 1} / {st.session_state.total_incidents}]**")
-    st.warning(current_event["desc"])
-    
-    if st.session_state.last_message:
-        st.success(st.session_state.last_message)
-        
-    st.markdown("### 판정을 선택하세요:")
-    
-    col_a, col_b = st.columns(2)
-    with col_a:
-        if st.button("1. 경기 진행 (Play On)", use_container_width=True):
-            process_judgment("1")
-            st.rerun()
-        if st.button("3. 경고 (Yellow Card)", use_container_width=True):
-            process_judgment("3")
-            st.rerun()
-    with col_b:
-        if st.button("2. 구두 경고 (Warning)", use_container_width=True):
-            process_judgment("2")
-            st.rerun()
-        if st.button("4. 퇴장 (Red Card)", use_container_width=True):
-            process_judgment("4")
-            st.rerun()
+        function init3D() {
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x0a1128);
+            scene.fog = new THREE.FogExp2(0x0a1128, 0.012);
 
-# 3. VAR 판독 화면
-elif st.session_state.state == "VAR":
-    st.error("📺 **[VAR 판독 요청]** VAR 룸으로부터 온필드 리뷰(RRA) 권고가 들어왔습니다!")
-    st.markdown("리플레이 화면을 통해 중대한 판정을 다시 확인하고 있습니다. 판정을 번복하시겠습니까?")
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("🔄 판정 번복하기", use_container_width=True):
-            resolve_var(True)
-            st.rerun()
-    with col2:
-        if st.button("🔒 원심 유지하기", use_container_width=True):
-            resolve_var(False)
-            st.rerun()
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.set(0, 1.7, 10); // 1인칭 심판 시점
 
-# 4. 경기 종료 리포트
-elif st.session_state.state == "POST_MATCH":
-    st.subheader("📊 경기 종료 리포트")
-    rep = st.session_state.match_report
-    
-    st.write(f"- **판정 정확도:** {rep['accuracy']:.1f%}% ({rep['correct']}/{rep['total']})")
-    st.write(f"- **경기 수당 획득:** +{rep['earned']:,}원")
-    st.markdown("### 📝 협회 및 언론 평가")
-    st.info(rep['eval'])
-    
-    if st.button("메인 메뉴로 돌아가기", use_container_width=True):
-        st.session_state.state = "MENU"
-        st.rerun()
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.shadowMap.enabled = true;
+            document.body.appendChild(renderer.domElement);
 
-# 5. 트레이닝 센터 (상점)
-elif st.session_state.state == "UPGRADE":
-    st.subheader("📈 심판 트레이닝 센터")
-    st.write("훈련을 통해 심판 능력치를 향상시키고 오심 확률을 줄이세요.")
-    
-    st.write(f"현재 보유 자금: **{st.session_state.money:,}원**")
-    
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.metric("시야 (Vision)", st.session_state.vision)
-        if st.button("시야 훈련 (3만 원)"):
-            if st.session_state.money >= 30000:
-                st.session_state.money -= 30000
-                st.session_state.vision += 10
-                st.success("시야 상승!")
-            else:
-                st.error("자금이 부족합니다.")
-    with col2:
-        st.metric("체력 (Stamina)", st.session_state.stamina)
-        if st.button("체력 훈련 (3만 원)"):
-            if st.session_state.money >= 30000:
-                st.session_state.money -= 30000
-                st.session_state.stamina += 10
-                st.success("체력 상승!")
-            else:
-                st.error("자금이 부족합니다.")
-    with col3:
-        st.metric("권위 (Authority)", st.session_state.authority)
-        if st.button("권위 스터디 (3만 원)"):
-            if st.session_state.money >= 30000:
-                st.session_state.money -= 30000
-                st.session_state.authority += 10
-                st.success("권위 상승!")
-            else:
-                st.error("자금이 부족합니다.")
-                
-    st.markdown("---")
-    if st.button("메인으로 돌아가기", use_container_width=True):
-        st.session_state.state = "MENU"
-        st.rerun()
+            // 조명
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+            scene.add(ambientLight);
+
+            const sunLight = new THREE.DirectionalLight(0xffffff, 0.8);
+            sunLight.position.set(30, 80, 30);
+            scene.add(sunLight);
+
+            // 축구장 잔디
+            const pitchGeo = new THREE.PlaneGeometry(110, 70);
+            const pitchMat = new THREE.MeshStandardMaterial({ color: 0x1b4d2e, roughness: 0.8 });
+            const pitch = new THREE.Mesh(pitchGeo, pitchMat);
+            pitch.rotation.x = -Math.PI / 2;
+            scene.add(pitch);
+
+            // 축구공 및 선수 배치
+            createMatchObjects();
+
+            // 포인터 락 시점 제어
+            document.body.addEventListener('click', () => {
+                document.body.requestPointerLock();
+            });
+
+            document.addEventListener('mousemove', onMouseMove, false);
+            document.addEventListener('keydown', onKeyDown, false);
+            document.addEventListener('keyup', onKeyUp, false);
+            window.addEventListener('resize', onWindowResize);
+
+            animate();
+            triggerNextIncidentTimer();
+        }
+
+        function createMatchObjects() {
+            // 축구공
+            const ballGeo = new THREE.SphereGeometry(0.3, 16, 16);
+            const ballMat = new THREE.MeshStandardMaterial({ color: 0xffffff });
+            ball = new THREE.Mesh(ballGeo, ballMat);
+            ball.position.set(0, 0.3, 0);
+            scene.add(ball);
+
+            // 3D 선수 마네킹 배치 (레드팀 / 블루팀)
+            const playerGeo = new THREE.CylinderGeometry(0.4, 0.4, 1.8, 12);
+            const redMat = new THREE.MeshStandardMaterial({ color: 0xd90429 });
+            const blueMat = new THREE.MeshStandardMaterial({ color: 0x0077b6 });
+
+            for (let i = 0; i < 10; i++) {
+                let p1 = new THREE.Mesh(playerGeo, redMat);
+                p1.position.set((Math.random() - 0.5) * 60, 0.9, (Math.random() - 0.5) * 40);
+                scene.add(p1);
+                players.push(p1);
+
+                let p2 = new THREE.Mesh(playerGeo, blueMat);
+                p2.position.set((Math.random() - 0.5) * 60, 0.9, (Math.random() - 0.5) * 40);
+                scene.add(p2);
+                players.push(p2);
+            }
+        }
+
+        let euler = new THREE.Euler(0, 0, 0, 'YXZ');
+        function onMouseMove(event) {
+            if (document.pointerLockElement !== document.body) return;
+            const movementX = event.movementX || 0;
+            const movementY = event.movementY || 0;
+
+            euler.setFromQuaternion(camera.quaternion);
+            euler.y -= movementX * 0.002;
+            euler.x -= movementY * 0.002;
+            euler.x = Math.max(-Math.PI / 2.2, Math.min(Math.PI / 2.2, euler.x));
+            camera.quaternion.setFromEuler(euler);
+        }
+
+        function onKeyDown(e) {
+            switch (e.code) {
+                case 'KeyW': moveForward = true; break;
+                case 'KeyS': moveBackward = true; break;
+                case 'KeyA': moveLeft = true; break;
+                case 'KeyD': moveRight = true; break;
+            }
+        }
+
+        function onKeyUp(e) {
+            switch (e.code) {
+                case 'KeyW': moveForward = false; break;
+                case 'KeyS': moveBackward = false; break;
+                case 'KeyA': moveLeft = false; break;
+                case 'KeyD': moveRight = false; break;
+            }
+        }
+
+        function triggerNextIncidentTimer() {
+            if (gameState.currentIncident >= gameState.totalIncidents) return;
+            
+            setTimeout(() => {
+                if (document.pointerLockElement === document.body) {
+                    document.exitPointerLock();
+                }
+                triggerIncident();
+            }, Math.random() * 4000 + 6000);
+        }
+
+        function triggerIncident() {
+            gameState.activeEvent = eventPool[Math.floor(Math.random() * eventPool.length)];
+            document.getElementById('incident-desc').innerText = gameState.activeEvent.desc;
+            document.getElementById('incident-modal').classList.remove('hidden');
+        }
+
+        function makeDecision(choice) {
+            document.getElementById('incident-modal').classList.add('hidden');
+            const isCorrect = gameState.activeEvent.correct.includes(choice);
+
+            if (isCorrect) {
+                gameState.correctCount++;
+                gameState.composure = Math.min(100, gameState.composure + 5);
+                alert("✨ 정확한 판정입니다! 경기가 정상 진행됩니다.");
+                nextStepFlow();
+            } else {
+                gameState.composure -= 35;
+                gameState.reputation -= 10;
+                updateHUD();
+
+                if (["PENALTY", "OFFSIDE"].includes(gameState.activeEvent.type) && Math.random() > 0.3) {
+                    document.getElementById('var-modal').classList.remove('hidden');
+                } else {
+                    alert("❌ 판정 논란 발생! 관중과 선수들의 항의가 거세집니다.");
+                    nextStepFlow();
+                }
+            }
+        }
+
+        function resolveVar(overturn) {
+            document.getElementById('var-modal').classList.add('hidden');
+            if (overturn) {
+                gameState.correctCount++;
+                gameState.composure += 10;
+                alert("🔄 VAR 검토 결과: 판정이 정심으로 번복되었습니다.");
+            } else {
+                alert("🔒 VAR 검토 결과: 원심 유지. 홈 팬들의 야유가 터져 나옵니다.");
+            }
+            nextStepFlow();
+        }
+
+        function nextStepFlow() {
+            gameState.currentIncident++;
+            updateHUD();
+
+            if (gameState.currentIncident >= gameState.totalIncidents || gameState.composure <= 0) {
+                endMatch();
+            } else {
+                triggerNextIncidentTimer();
+            }
+        }
+
+        function endMatch() {
+            const accuracy = (gameState.correctCount / gameState.totalIncidents) * 100;
+            let evalText = accuracy >= 70 ? "🌟 침착하고 공정한 판정으로 최고 평점을 받았습니다!" : "🚨 오심 논란으로 징계 위기에 처했습니다.";
+            
+            if (accuracy >= 70 && gameState.reputation >= 70) {
+                gameState.league = "프리미어리그 (Premier League)";
+                evalText += "<br>🏆 축하합니다! 상위 리그로 승격되었습니다!";
+            }
+
+            let html = `
+                <p><b>판정 정확도:</b> ${accuracy.toFixed(1)}% (${gameState.correctCount}/${gameState.totalIncidents})</p>
+                <p><b>현재 평판:</b> ${gameState.reputation}점</p>
+                <div class="mt-4 p-3 bg-white/10 rounded-lg text-yellow-300 font-bold">${evalText}</div>
+            `;
+            document.getElementById('report-content').innerHTML = html;
+            document.getElementById('report-modal').classList.remove('hidden');
+        }
+
+        function startNewMatch() {
+            document.getElementById('report-modal').classList.add('hidden');
+            gameState.currentIncident = 0;
+            gameState.correctCount = 0;
+            gameState.composure = 100;
+            updateHUD();
+            triggerNextIncidentTimer();
+        }
+
+        function updateHUD() {
+            document.getElementById('hud-league').innerText = gameState.league;
+            document.getElementById('hud-rep').innerText = gameState.reputation;
+            
+            const compEl = document.getElementById('hud-composure');
+            compEl.innerText = gameState.composure + '%';
+            compEl.className = gameState.composure > 40 ? "text-emerald-400" : "text-red-400";
+            
+            let acc = gameState.currentIncident === 0 ? 100 : (gameState.correctCount / gameState.currentIncident) * 100;
+            document.getElementById('hud-acc').innerText = acc.toFixed(0) + '%';
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            const time = performance.now();
+            const delta = (time - prevTime) / 1000;
+
+            if (document.pointerLockElement === document.body) {
+                velocity.x -= velocity.x * 10.0 * delta;
+                velocity.z -= velocity.z * 10.0 * delta;
+
+                direction.z = Number(moveForward) - Number(moveBackward);
+                direction.x = Number(moveRight) - Number(moveLeft);
+                direction.normalize();
+
+                if (moveForward || moveBackward) velocity.z -= direction.z * 35.0 * delta;
+                if (moveLeft || moveRight) velocity.x -= direction.x * 35.0 * delta;
+
+                camera.translateX(-velocity.x * delta);
+                camera.translateZ(velocity.z * delta);
+
+                // 경기장 이동 경계
+                camera.position.x = Math.max(-50, Math.min(50, camera.position.x));
+                camera.position.z = Math.max(-30, Math.min(30, camera.position.z));
+                camera.position.y = 1.7; // 심판 눈높이 고정
+            }
+
+            // 선수들 간단한 인공지능 움직임
+            players.forEach((p, idx) => {
+                p.position.z += Math.sin(time * 0.002 + idx) * 0.03;
+            });
+
+            prevTime = time;
+            renderer.render(scene, camera);
+        }
+
+        window.onload = () => {
+            init3D();
+            updateHUD();
+        };
+    </script>
+</body>
+</html>
+"""
+
+# Streamlit 내부에 1인칭 3D 캔버스 렌더링
+components.html(html_code, height=850, scrolling=False)
